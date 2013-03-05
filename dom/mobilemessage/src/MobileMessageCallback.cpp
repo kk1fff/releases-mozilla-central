@@ -39,8 +39,8 @@ MobileMessageCallback::~MobileMessageCallback()
 nsresult
 MobileMessageCallback::NotifySuccess(const jsval& aResult)
 {
-  nsCOMPtr<nsIDOMRequestService> rs = do_GetService(DOMREQUEST_SERVICE_CONTRACTID);
-  return rs ? rs->FireSuccess(mDOMRequest, aResult) : NS_ERROR_FAILURE;
+  mDOMRequest->FireSuccess(aResult);
+  return NS_OK;
 }
 
 nsresult
@@ -67,20 +67,22 @@ MobileMessageCallback::NotifySuccess(nsISupports *aMessage)
 nsresult
 MobileMessageCallback::NotifyError(int32_t aError)
 {
-  nsCOMPtr<nsIDOMRequestService> rs = do_GetService(DOMREQUEST_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(rs, NS_ERROR_FAILURE);
-
   switch (aError) {
     case nsIMobileMessageCallback::NO_SIGNAL_ERROR:
-      return rs->FireError(mDOMRequest, NS_LITERAL_STRING("NoSignalError"));
+      mDOMRequest->FireError(NS_LITERAL_STRING("NoSignalError"));
+      break;
     case nsIMobileMessageCallback::NOT_FOUND_ERROR:
-      return rs->FireError(mDOMRequest, NS_LITERAL_STRING("NotFoundError"));
+      mDOMRequest->FireError(NS_LITERAL_STRING("NotFoundError"));
+      break;
     case nsIMobileMessageCallback::UNKNOWN_ERROR:
-      return rs->FireError(mDOMRequest, NS_LITERAL_STRING("UnknownError"));
+      mDOMRequest->FireError(NS_LITERAL_STRING("UnknownError"));
+      break;
     case nsIMobileMessageCallback::INTERNAL_ERROR:
-      return rs->FireError(mDOMRequest, NS_LITERAL_STRING("InternalError"));
+      mDOMRequest->FireError(NS_LITERAL_STRING("InternalError"));
+      break;
     default: // SUCCESS_NO_ERROR is handled above.
-      MOZ_ASSERT(false, "Unknown error value.");
+      MOZ_NOT_REACHED("Should never get here!");
+      return NS_ERROR_FAILURE;
   }
 
   return NS_OK;
@@ -120,31 +122,6 @@ NS_IMETHODIMP
 MobileMessageCallback::NotifyDeleteMessageFailed(int32_t aError)
 {
   return NotifyError(aError);
-}
-
-NS_IMETHODIMP
-MobileMessageCallback::NotifyMessageListCreated(int32_t aListId,
-                                                nsISupports *aMessage)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-MobileMessageCallback::NotifyReadMessageListFailed(int32_t aError)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-MobileMessageCallback::NotifyNextMessageInListGot(nsISupports *aMessage)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-MobileMessageCallback::NotifyNoMessageInList()
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
