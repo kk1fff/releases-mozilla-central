@@ -99,27 +99,24 @@ SmsIPCService::DeleteMessage(int32_t aMessageId,
 }
 
 NS_IMETHODIMP
-SmsIPCService::CreateMessageList(nsIDOMMozSmsFilter* aFilter,
-                                 bool aReverse,
-                                 nsIMobileMessageCallback* aRequest)
+SmsIPCService::CreateMessageCursor(nsIDOMMozSmsFilter* aFilter,
+                                   bool aReverse,
+                                   nsIMobileMessageCursorCallback* aCallback,
+                                   nsICursorContinueCallback** aResult)
 {
-  SmsFilterData data = SmsFilterData(static_cast<SmsFilter*>(aFilter)->GetData());
-  SendRequest(CreateMessageListRequest(data, aReverse), aRequest);
-  return NS_OK;
-}
+  NS_ENSURE_TRUE(gSmsChild, NS_ERROR_FAILURE);
 
-NS_IMETHODIMP
-SmsIPCService::GetNextMessageInList(int32_t aListId,
-                                    nsIMobileMessageCallback* aRequest)
-{
-  SendRequest(GetNextMessageInListRequest(aListId), aRequest);
-  return NS_OK;
-}
+  nsRefPtr<MobileMessageCursorChild> actor =
+    new MobileMessageCursorChild(aCallback);
+  SmsFilterData data =
+    SmsFilterData(static_cast<SmsFilter*>(aFilter)->GetData());
 
-NS_IMETHODIMP
-SmsIPCService::ClearMessageList(int32_t aListId)
-{
-  GetSmsChild()->SendClearMessageList(aListId);
+  PMobileMessageCursorChild* child =
+    gSmsChild->SendPMobileMessageCursorConstructor(actor,
+      CreateMessageCursorRequest(data, aReverse));
+  NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
+
+  actor.forget(aResult);
   return NS_OK;
 }
 

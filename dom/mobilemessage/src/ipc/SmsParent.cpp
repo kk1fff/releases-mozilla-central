@@ -15,6 +15,7 @@
 #include "SmsFilter.h"
 #include "SmsRequest.h"
 #include "SmsSegmentInfo.h"
+#include "nsIDOMDOMCursor.h"
 
 namespace mozilla {
 namespace dom {
@@ -36,11 +37,6 @@ SmsParent::SmsParent()
   obs->AddObserver(this, kSmsFailedObserverTopic, false);
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
-}
-
-SmsParent::~SmsParent()
-{
-  MOZ_COUNT_DTOR(SmsParent);
 }
 
 void
@@ -174,33 +170,18 @@ SmsParent::RecvGetSegmentInfoForText(const nsString& aText,
 }
 
 bool
-SmsParent::RecvClearMessageList(const int32_t& aListId)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-
-  mobileMessageDBService->ClearMessageList(aListId);
-  return true;
-}
-
-bool
 SmsParent::RecvPSmsRequestConstructor(PSmsRequestParent* aActor,
                                       const IPCSmsRequest& aRequest)
 {
   SmsRequestParent* actor = static_cast<SmsRequestParent*>(aActor);
 
   switch (aRequest.type()) {
-    case IPCSmsRequest::TCreateMessageListRequest:
-      return actor->DoRequest(aRequest.get_CreateMessageListRequest());
     case IPCSmsRequest::TSendMessageRequest:
       return actor->DoRequest(aRequest.get_SendMessageRequest());
     case IPCSmsRequest::TGetMessageRequest:
       return actor->DoRequest(aRequest.get_GetMessageRequest());
     case IPCSmsRequest::TDeleteMessageRequest:
       return actor->DoRequest(aRequest.get_DeleteMessageRequest());
-    case IPCSmsRequest::TGetNextMessageInListRequest:
-      return actor->DoRequest(aRequest.get_GetNextMessageInListRequest());
     case IPCSmsRequest::TMarkMessageReadRequest:
       return actor->DoRequest(aRequest.get_MarkMessageReadRequest());
     case IPCSmsRequest::TGetThreadListRequest:
@@ -227,10 +208,33 @@ SmsParent::DeallocPSmsRequest(PSmsRequestParent* aActor)
   return true;
 }
 
+bool
+SmsParent::RecvPMobileMessageCursorConstructor(PMobileMessageCursorParent* aActor,
+                                               const CreateMessageCursorRequest& aRequest)
+{
+  MobileMessageCursorParent* actor =
+    static_cast<MobileMessageCursorParent*>(aActor);
+
+  return actor->DoRequest(aRequest);
+}
+
+PMobileMessageCursorParent*
+SmsParent::AllocPMobileMessageCursor(const CreateMessageCursorRequest& aRequest)
+{
+  return new MobileMessageCursorParent();
+}
+
+bool
+SmsParent::DeallocPMobileMessageCursor(PMobileMessageCursorParent* aActor)
+{
+  delete aActor;
+  return true;
+}
 
 /*******************************************************************************
  * SmsRequestParent
  ******************************************************************************/
+
 SmsRequestParent::SmsRequestParent()
 {
   MOZ_COUNT_CTOR(SmsRequestParent);
@@ -304,37 +308,6 @@ SmsRequestParent::DoRequest(const DeleteMessageRequest& aRequest)
 }
 
 bool
-SmsRequestParent::DoRequest(const CreateMessageListRequest& aRequest)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  SmsFilter *filter = new SmsFilter(aRequest.filter());
-  nsresult rv = mobileMessageDBService->CreateMessageList(filter, aRequest.reverse(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
-}
-
-bool
-SmsRequestParent::DoRequest(const GetNextMessageInListRequest& aRequest)
-{
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
-    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->GetNextMessageInList(aRequest.aListId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
-}
-
-bool
 SmsRequestParent::DoRequest(const MarkMessageReadRequest& aRequest)
 {
   nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
@@ -362,6 +335,71 @@ SmsRequestParent::DoRequest(const GetThreadListRequest& aRequest)
   NS_ENSURE_SUCCESS(rv, false);
 
   return true;
+}
+
+/*******************************************************************************
+ * MobileMessageCursorParent
+ ******************************************************************************/
+
+NS_IMPL_ISUPPORTS1(MobileMessageCursorParent, nsIMobileMessageCursorCallback)
+
+void
+MobileMessageCursorParent::ActorDestroy(ActorDestroyReason aWhy)
+{
+}
+
+bool
+MobileMessageCursorParent::RecvContinue()
+{
+  MOZ_ASSERT(mContinueCallback);
+
+  return NS_SUCCEEDED(mContinueCallback->HandleContinue());
+}
+
+bool
+MobileMessageCursorParent::DoRequest(const CreateMessageCursorRequest& aRequest)
+{
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
+    do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(dbService, false);
+
+  nsCOMPtr<nsIDOMMozSmsFilter> filter = new SmsFilter(aRequest.filter());
+  bool reverse = aRequest.reverse();
+
+  nsresult rv = dbService->CreateMessageCursor(filter, reverse, this,
+                                               getter_AddRefs(mContinueCallback));
+  return NS_SUCCEEDED(rv);
+}
+
+// nsIMobileMessageCursorCallback
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorError(int32_t aError)
+{
+  MOZ_ASSERT(mContinueCallback);
+
+  mContinueCallback = nullptr;
+
+  return SendNotifyError(aError) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorResult(nsISupports* aResult)
+{
+  MOZ_ASSERT(mContinueCallback);
+
+  SmsMessage* message = static_cast<SmsMessage*>(aResult);
+  return SendNotifyResult(message->GetData()) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+MobileMessageCursorParent::NotifyCursorDone()
+{
+  MOZ_ASSERT(mContinueCallback);
+
+  mContinueCallback = nullptr;
+
+  return SendNotifyDone() ? NS_OK : NS_ERROR_FAILURE;
 }
 
 } // namespace mobilemessage

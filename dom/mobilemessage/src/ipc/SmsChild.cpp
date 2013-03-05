@@ -9,6 +9,7 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/ContentChild.h"
 #include "SmsRequest.h"
+#include "nsIMobileMessageCursorCallback.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -34,16 +35,6 @@ NotifyObserversWithSmsMessage(const char* aEventName,
 namespace mozilla {
 namespace dom {
 namespace mobilemessage {
-
-SmsChild::SmsChild()
-{
-  MOZ_COUNT_CTOR(SmsChild);
-}
-
-SmsChild::~SmsChild()
-{
-  MOZ_COUNT_DTOR(SmsChild);
-}
 
 void
 SmsChild::ActorDestroy(ActorDestroyReason aWhy)
@@ -106,20 +97,29 @@ SmsChild::DeallocPSmsRequest(PSmsRequestChild* aActor)
   return true;
 }
 
+PMobileMessageCursorChild*
+SmsChild::AllocPMobileMessageCursor(const CreateMessageCursorRequest& aRequest)
+{
+  MOZ_NOT_REACHED("Caller is supposed to manually construct a request!");
+  return nullptr;
+}
+
+bool
+SmsChild::DeallocPMobileMessageCursor(PMobileMessageCursorChild* aActor)
+{
+  delete aActor;
+  return true;
+}
+
 /*******************************************************************************
  * SmsRequestChild
  ******************************************************************************/
 
 SmsRequestChild::SmsRequestChild(nsIMobileMessageCallback* aReplyRequest)
-: mReplyRequest(aReplyRequest)
+  : mReplyRequest(aReplyRequest)
 {
   MOZ_COUNT_CTOR(SmsRequestChild);
   MOZ_ASSERT(aReplyRequest);
-}
-
-SmsRequestChild::~SmsRequestChild()
-{
-  MOZ_COUNT_DTOR(SmsRequestChild);
 }
 
 void
@@ -155,21 +155,6 @@ SmsRequestChild::Recv__delete__(const MessageReply& aReply)
     case MessageReply::TReplyMessageDeleteFail:
       mReplyRequest->NotifyMessageDeleted(aReply.get_ReplyMessageDeleteFail().error());
       break;
-    case MessageReply::TReplyNoMessageInList:
-      mReplyRequest->NotifyNoMessageInList();
-      break;
-    case MessageReply::TReplyCreateMessageList:
-      message = new SmsMessage(aReply.get_ReplyCreateMessageList().messageData());
-      mReplyRequest->NotifyMessageListCreated(aReply.get_ReplyCreateMessageList().listId(), 
-                                              message);
-      break;
-    case MessageReply::TReplyCreateMessageListFail:
-      mReplyRequest->NotifyReadMessageListFailed(aReply.get_ReplyCreateMessageListFail().error());
-      break;
-    case MessageReply::TReplyGetNextMessage:
-      message = new SmsMessage(aReply.get_ReplyGetNextMessage().messageData());
-      mReplyRequest->NotifyNextMessageInListGot(message);
-      break;
     case MessageReply::TReplyMarkeMessageRead:
       mReplyRequest->NotifyMessageMarkedRead(aReply.get_ReplyMarkeMessageRead().read());
       break;
@@ -190,6 +175,65 @@ SmsRequestChild::Recv__delete__(const MessageReply& aReply)
   }
 
   return true;
+}
+
+/*******************************************************************************
+ * MobileMessageCursorChild
+ ******************************************************************************/
+
+NS_IMPL_ISUPPORTS1(MobileMessageCursorChild, nsICursorContinueCallback)
+
+MobileMessageCursorChild::MobileMessageCursorChild(nsIMobileMessageCursorCallback* aCallback)
+  : mCursorCallback(aCallback)
+{
+  MOZ_COUNT_CTOR(MobileMessageCursorChild);
+  MOZ_ASSERT(aCallback);
+}
+
+void
+MobileMessageCursorChild::ActorDestroy(ActorDestroyReason aWhy)
+{
+  // Nothing needed here.
+}
+
+bool
+MobileMessageCursorChild::RecvNotifyResult(const SmsMessageData& aMessageData)
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  nsCOMPtr<nsISupports> result = new SmsMessage(aMessageData);
+  mCursorCallback->NotifyCursorResult(result);
+  return true;
+}
+
+bool
+MobileMessageCursorChild::RecvNotifyError(const int32_t& aError)
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  mCursorCallback->NotifyCursorError(aError);
+  mCursorCallback = nullptr;
+  return true;
+}
+
+bool
+MobileMessageCursorChild::RecvNotifyDone()
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  mCursorCallback->NotifyCursorDone();
+  mCursorCallback = nullptr;
+  return true;
+}
+
+// nsICursorContinueCallback
+
+NS_IMETHODIMP
+MobileMessageCursorChild::HandleContinue()
+{
+  MOZ_ASSERT(mCursorCallback);
+
+  return SendContinue() ? NS_OK : NS_ERROR_FAILURE;
 }
 
 } // namespace mobilemessage
