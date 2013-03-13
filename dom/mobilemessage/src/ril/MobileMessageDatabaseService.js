@@ -16,6 +16,8 @@ const RIL_MOBILEMESSAGEDATABASESERVICE_CID =
   Components.ID("{29785f90-6b5b-11e2-9201-3b280170b2ec}");
 const RIL_GETMESSAGESCURSOR_CID =
   Components.ID("{484d1ad8-840e-4782-9dc4-9ebc4d914937}");
+const RIL_GETTHREADSCURSOR_CID =
+  Components.ID("{95ee7c3e-d6f2-4ec4-ade5-0c453c036d35}");
 
 const DEBUG = false;
 const DB_NAME = "sms";
@@ -121,6 +123,17 @@ function createDomMessageFromRecord(aMessageRecord) {
                                                   smil,
                                                   attachments);
   }
+}
+
+function createThreadFromRecord(aThreadRecord) {
+  if (DEBUG) {
+    debug("createThreadFromRecord: " + JSON.stringify(aThreadRecord));
+  }
+  return gMobileMessageService.createThread(aThreadRecord.id,
+                                            aThreadRecord.subject,
+                                            aThreadRecord.unreadCount,
+                                            aThreadRecord.participantAddresses,
+                                            aThreadRecord.lastTimestamp);
 }
 
 /**
@@ -1341,33 +1354,35 @@ MobileMessageDatabaseService.prototype = {
     }, [MESSAGE_STORE_NAME, THREAD_STORE_NAME]);
   },
 
-  getThreadList: function getThreadList(aRequest) {
+  createThreadCursor: function createThreadCursor(callback) {
     if (DEBUG) debug("Getting thread list");
+
+    let cursor = new GetThreadsCursor(this, callback);
     this.newTxn(READ_ONLY, function (error, txn, threadStore) {
+      let collector = cursor.collector;
       if (error) {
         if (DEBUG) debug(error);
-        aRequest.notifyThreadListFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+        collector.collect(null, -1);
         return;
       }
       txn.onerror = function onerror(event) {
         if (DEBUG) debug("Caught error on transaction ", event.target.errorCode);
-        aRequest.notifyThreadListFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+        collector.collect(null, -1);
       };
-      let request = threadStore.index("lastTimestamp").mozGetAll();
+      let request = threadStore.index("lastTimestamp").openKeyCursor();
       request.onsuccess = function(event) {
-        // TODO: keep backward compatibility of original API interface only.
-        let results = [];
-        for each (let item in event.target.result) {
-          results.push({
-            senderOrReceiver: item.participantAddresses[0],
-            timestamp: item.lastTimestamp,
-            body: item.subject,
-            unreadCount: item.unreadCount
-          });
+        let cursor = event.target.result;
+        if (cursor) {
+          if (collector.collect(txn, cursor.primaryKey, cursor.key)) {
+            cursor.continue();
+          }
+        } else {
+          collector.collect(txn, 0, 0);
         }
-        aRequest.notifyThreadList(results);
       };
     }, [THREAD_STORE_NAME]);
+
+    return cursor;
   }
 };
 
@@ -1857,6 +1872,76 @@ GetMessagesCursor.prototype = {
     this.collector.squeeze(this.notify.bind(this));
   }
 };
+
+function GetThreadsCursor(service, callback) {
+  this.service = service;
+  this.callback = callback;
+  this.collector = new ResultsCollector();
+
+  this.handleContinue(); // Trigger first run.
+}
+GetThreadsCursor.prototype = {
+  classID: RIL_GETTHREADSCURSOR_CID,
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsICursorContinueCallback]),
+
+  service: null,
+  callback: null,
+  collector: null,
+
+  getThreadTxn: function getThreadTxn(threadStore, threadId) {
+    if (DEBUG) debug ("Fetching message " + threadId);
+
+    let getRequest = threadStore.get(threadId);
+    let self = this;
+    getRequest.onsuccess = function onsuccess(event) {
+      if (DEBUG) {
+        debug("notifyCursorResult - threadId: " + threadId);
+      }
+      let thread = createThreadFromRecord(event.target.result);
+      self.callback.notifyCursorResult(thread);
+    };
+    getRequest.onerror = function onerror(event) {
+      if (DEBUG) {
+        debug("notifyCursorError - threadId: " + threadId);
+      }
+      self.callback.notifyCursorError(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+    };
+  },
+
+  notify: function notify(txn, threadId) {
+    if (!threadId) {
+      this.callback.notifyCursorDone();
+      return;
+    }
+
+    if (threadId < 0) {
+      this.callback.notifyCursorError(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+      return;
+    }
+
+    if (txn) {
+      let threadStore = txn.objectStore(THREAD_STORE_NAME);
+      this.getThreadTxn(threadStore, threadId);
+      return;
+    }
+
+    let self = this;
+    this.service.newTxn(READ_ONLY, function (error, txn, threadStore) {
+      if (error) {
+        self.callback.notifyCursorError(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+        return;
+      }
+      self.getThreadTxn(threadStore, threadId);
+    }, [THREAD_STORE_NAME]);
+  },
+
+  // nsICursorContinueCallback
+
+  handleContinue: function handleContinue() {
+    if (DEBUG) debug("Getting next thread in list");
+    this.collector.squeeze(this.notify.bind(this));
+  }
+}
 
 XPCOMUtils.defineLazyServiceGetter(MobileMessageDatabaseService.prototype, "mRIL",
                                    "@mozilla.org/ril;1",
