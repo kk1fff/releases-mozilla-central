@@ -19,7 +19,7 @@ protocol PMobileMessageCursor
   manager PSms;
 
 child:
-  NotifyResult(SmsMessageData aMessageData);
+  NotifyResult(MobileMessageCursorData aData);
   NotifyError(int32_t aError);
   NotifyDone();
 
