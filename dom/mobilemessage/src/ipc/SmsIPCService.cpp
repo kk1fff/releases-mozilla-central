@@ -50,7 +50,7 @@ SendRequest(const IPCSmsRequest& aRequest,
 }
 
 nsresult
-SendCursorRequest(const CreateMessageCursorRequest& aRequest,
+SendCursorRequest(const IPCMobileMessageCursor& aRequest,
                   nsIMobileMessageCursorCallback* aRequestReply,
                   nsICursorContinueCallback** aResult)
 {
@@ -141,7 +141,7 @@ SmsIPCService::CreateMessageCursor(nsIDOMMozSmsFilter* aFilter,
   const SmsFilterData& data =
     SmsFilterData(static_cast<SmsFilter*>(aFilter)->GetData());
 
-  return SendCursorRequest(CreateMessageCursorRequest(data, aReverse),
+  return SendCursorRequest(IPCMobileMessageCursor(CreateMessageCursorRequest(data, aReverse)),
                            aCursorCallback, aResult);
 }
 
@@ -154,7 +154,9 @@ SmsIPCService::MarkMessageRead(int32_t aMessageId,
 }
 
 NS_IMETHODIMP
-SmsIPCService::GetThreadList(nsIMobileMessageCallback* aRequest)
+SmsIPCService::CreateThreadCursor(nsIMobileMessageCursorCallback* aCursorCallback,
+                                  nsICursorContinueCallback** aResult)
 {
-  return SendRequest(GetThreadListRequest(), aRequest);
+  return SendCursorRequest(IPCMobileMessageCursor(CreateThreadCursorRequest()),
+                           aCursorCallback, aResult);
 }
