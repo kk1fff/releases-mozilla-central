@@ -4,6 +4,7 @@
 
 #include "SmsMessage.h"
 #include "MmsMessage.h"
+#include "MobileMessageThread.h"
 #include "MobileMessageService.h"
 #include "SmsSegmentInfo.h"
 #include "jsapi.h"
@@ -92,6 +93,24 @@ MobileMessageService::CreateSmsSegmentInfo(int32_t aSegments,
       new SmsSegmentInfo(aSegments, aCharsPerSegment, aCharsAvailableInLastSegment);
   info.forget(aSegmentInfo);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+MobileMessageService::CreateThread(uint64_t aId,
+                                   const nsAString& aBody,
+                                   uint64_t aUnreadCount,
+                                   const JS::Value& aParticipants,
+                                   const JS::Value& aTimestamp,
+                                   JSContext* aCx,
+                                   nsIDOMMozMobileMessageThread** aThread)
+{
+  return MobileMessageThread::Create(aId,
+                                     aBody,
+                                     aUnreadCount,
+                                     aParticipants,
+                                     aTimestamp,
+                                     aCx,
+                                     aThread);
 }
 
 } // namespace mobilemessage
