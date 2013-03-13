@@ -113,7 +113,7 @@ SmsIPCService::CreateMessageCursor(nsIDOMMozSmsFilter* aFilter,
 
   PMobileMessageCursorChild* child =
     gSmsChild->SendPMobileMessageCursorConstructor(actor,
-      CreateMessageCursorRequest(data, aReverse));
+      IPCMobileMessageCursor(CreateMessageCursorRequest(data, aReverse)));
   NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
 
   actor.forget(aResult);
@@ -130,9 +130,20 @@ SmsIPCService::MarkMessageRead(int32_t aMessageId,
 }
 
 NS_IMETHODIMP
-SmsIPCService::GetThreadList(nsIMobileMessageCallback* aRequest)
+SmsIPCService::CreateThreadCursor(nsIMobileMessageCursorCallback* aCallback,
+                                  nsICursorContinueCallback** aResult)
 {
-  SendRequest(GetThreadListRequest(), aRequest);
+  NS_ENSURE_TRUE(gSmsChild, NS_ERROR_FAILURE);
+
+  nsRefPtr<MobileMessageCursorChild> actor =
+    new MobileMessageCursorChild(aCallback);
+
+  PMobileMessageCursorChild* child =
+    gSmsChild->SendPMobileMessageCursorConstructor(actor,
+      IPCMobileMessageCursor(CreateThreadCursorRequest()));
+  NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
+
+  actor.forget(aResult);
   return NS_OK;
 }
 
