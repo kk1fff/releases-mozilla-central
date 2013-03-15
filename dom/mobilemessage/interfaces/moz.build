@@ -14,7 +14,6 @@ XPIDL_SOURCES += [
     'nsIDOMNavigatorSms.idl',
     'nsIDOMSmsFilter.idl',
     'nsIDOMSmsManager.idl',
-    'nsIDOMSmsRequest.idl',
     'nsIDOMSmsSegmentInfo.idl',
     'nsIMobileMessageCallback.idl',
     'nsIMobileMessageCursorCallback.idl',

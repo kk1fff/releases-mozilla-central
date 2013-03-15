@@ -13,9 +13,9 @@
 #include "SmsMessage.h"
 #include "nsIMobileMessageDatabaseService.h"
 #include "SmsFilter.h"
-#include "SmsRequest.h"
 #include "SmsSegmentInfo.h"
 #include "nsIDOMDOMCursor.h"
+#include "nsIDOMDOMRequest.h"
 #include "MobileMessageThread.h"
 
 namespace mozilla {
@@ -243,91 +243,109 @@ SmsParent::DeallocPMobileMessageCursor(PMobileMessageCursorParent* aActor)
  * SmsRequestParent
  ******************************************************************************/
 
-SmsRequestParent::SmsRequestParent()
-{
-  MOZ_COUNT_CTOR(SmsRequestParent);
-}
-
-SmsRequestParent::~SmsRequestParent()
-{
-  MOZ_COUNT_DTOR(SmsRequestParent);
-}
+NS_IMPL_ISUPPORTS1(SmsRequestParent, nsIMobileMessageCallback)
 
 void
 SmsRequestParent::ActorDestroy(ActorDestroyReason aWhy)
 {
-  if (mSmsRequest) {
-    mSmsRequest->SetActorDied();
-    mSmsRequest = nullptr;
-  }
-}
-
-void
-SmsRequestParent::SendReply(const MessageReply& aReply) {
-  nsRefPtr<SmsRequest> request;
-  mSmsRequest.swap(request);
-  if (!Send__delete__(this, aReply)) {
-    NS_WARNING("Failed to send response to child process!");
-  }
 }
 
 bool
 SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
 {
   nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsService, true);
+  NS_ENSURE_TRUE(smsService, false);
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = smsService->Send(aRequest.number(), aRequest.message(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
+  return NS_SUCCEEDED(smsService->Send(aRequest.number(), aRequest.message(), this));
 }
 
 bool
 SmsRequestParent::DoRequest(const GetMessageRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
+  NS_ENSURE_TRUE(dbService, false);
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->GetMessageMoz(aRequest.messageId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
+  return NS_SUCCEEDED(dbService->GetMessageMoz(aRequest.messageId(), this));
 }
 
 bool
 SmsRequestParent::DoRequest(const DeleteMessageRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
+  NS_ENSURE_TRUE(dbService, false);
 
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->DeleteMessage(aRequest.messageId(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return true;
+  return NS_SUCCEEDED(dbService->DeleteMessage(aRequest.messageId(), this));
 }
 
 bool
 SmsRequestParent::DoRequest(const MarkMessageReadRequest& aRequest)
 {
-  nsCOMPtr<nsIMobileMessageDatabaseService> mobileMessageDBService =
+  nsCOMPtr<nsIMobileMessageDatabaseService> dbService =
     do_GetService(MOBILE_MESSAGE_DATABASE_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(dbService, false);
 
-  NS_ENSURE_TRUE(mobileMessageDBService, true);
-  mSmsRequest = SmsRequest::Create(this);
-  nsCOMPtr<nsIMobileMessageCallback> forwarder = new SmsRequestForwarder(mSmsRequest);
-  nsresult rv = mobileMessageDBService->MarkMessageRead(aRequest.messageId(), aRequest.value(), forwarder);
-  NS_ENSURE_SUCCESS(rv, false);
+  return NS_SUCCEEDED(dbService->MarkMessageRead(aRequest.messageId(),
+                                          aRequest.value(), this));
+}
 
-  return true;
+nsresult
+SmsRequestParent::SendReply(const MessageReply& aReply)
+{
+  return Send__delete__(this, aReply) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+// nsIMobileMessageCallback
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageSent(nsISupports *aMessage)
+{
+  SmsMessage* message = static_cast<SmsMessage*>(aMessage);
+  return SendReply(MessageReply(ReplyMessageSend(message->GetData())));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifySendMessageFailed(int32_t aError)
+{
+  return SendReply(MessageReply(ReplyMessageSendFail(aError)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageGot(nsISupports *aMessage)
+{
+  SmsMessage* message = static_cast<SmsMessage*>(aMessage);
+  return SendReply(MessageReply(ReplyGetMessage(message->GetData())));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyGetMessageFailed(int32_t aError)
+{
+  return SendReply(MessageReply(ReplyGetMessageFail(aError)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageDeleted(bool aDeleted)
+{
+  return SendReply(MessageReply(ReplyMessageDelete(aDeleted)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyDeleteMessageFailed(int32_t aError)
+{
+  return SendReply(MessageReply(ReplyMessageDeleteFail(aError)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMessageMarkedRead(bool aRead)
+{
+  return SendReply(MessageReply(ReplyMarkeMessageRead(aRead)));
+}
+
+NS_IMETHODIMP
+SmsRequestParent::NotifyMarkMessageReadFailed(int32_t aError)
+{
+  return SendReply(MessageReply(ReplyMarkeMessageReadFail(aError)));
 }
 
 /*******************************************************************************
