@@ -8,7 +8,7 @@
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "mozilla/dom/ContentChild.h"
-#include "SmsRequest.h"
+#include "nsIMobileMessageCallback.h"
 #include "nsIMobileMessageCursorCallback.h"
 #include "MobileMessageThread.h"
 
