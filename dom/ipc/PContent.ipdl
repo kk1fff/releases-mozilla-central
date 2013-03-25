@@ -395,7 +395,7 @@ parent:
     PNecko();
 
     PSms();
-    
+
     PStorage(StorageConstructData data);
 
     PBluetooth();

@@ -8,6 +8,7 @@
 include "mozilla/dom/mobilemessage/Types.h";
 
 include protocol PSms;
+include protocol PBlob;
 include SmsTypes;
 
 namespace mozilla {
