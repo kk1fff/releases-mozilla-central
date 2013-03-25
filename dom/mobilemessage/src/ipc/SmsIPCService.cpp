@@ -18,7 +18,10 @@ namespace mobilemessage {
 
 PSmsChild* gSmsChild;
 
-NS_IMPL_ISUPPORTS2(SmsIPCService, nsISmsService, nsIMobileMessageDatabaseService)
+NS_IMPL_ISUPPORTS3(SmsIPCService,
+                   nsISmsService,
+                   nsIMmsService,
+                   nsIMobileMessageDatabaseService)
 
 void
 SendRequest(const IPCSmsRequest& aRequest, nsIMobileMessageCallback* aRequestReply)
@@ -144,6 +147,13 @@ SmsIPCService::CreateThreadCursor(nsIMobileMessageCursorCallback* aCallback,
 
   actor.forget(aResult);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+SmsIPCService::Send(const JS::Value& aParameters,
+                    nsIMobileMessageCallback *aRequest)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 } // namespace mobilemessage
