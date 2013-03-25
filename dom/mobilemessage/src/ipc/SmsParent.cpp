@@ -5,12 +5,18 @@
 
 #include "SmsParent.h"
 #include "nsISmsService.h"
+#include "nsIMmsService.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "Constants.h"
 #include "nsIDOMMozSmsMessage.h"
+#include "nsIDOMMozMmsMessage.h"
 #include "mozilla/unused.h"
+#include "nsIDOMFile.h"
+#include "mozilla/dom/ipc/Blob.h"
+#include "mozilla/dom/ContentParent.h"
 #include "SmsMessage.h"
+#include "MmsMessage.h"
 #include "nsIMobileMessageDatabaseService.h"
 #include "SmsFilter.h"
 #include "SmsSegmentInfo.h"
@@ -21,6 +27,121 @@
 namespace mozilla {
 namespace dom {
 namespace mobilemessage {
+
+static JSObject*
+MmsAttachmentDataToJSObject(JSContext* aContext,
+                            const MmsAttachmentData& aAttachment)
+{
+  JSObject* obj = JS_NewObject(aContext, nullptr, nullptr, nullptr);
+  NS_ENSURE_TRUE(obj, nullptr);
+
+  // id
+  JSString* idStr = JS_NewUCStringCopyN(aContext,
+                                        aAttachment.id().get(),
+                                        aAttachment.id().Length());
+  NS_ENSURE_TRUE(idStr, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "id", JS::StringValue(idStr),
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+  // location
+  JSString* locStr = JS_NewUCStringCopyN(aContext,
+                                         aAttachment.location().get(),
+                                         aAttachment.location().Length());
+  NS_ENSURE_TRUE(locStr, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "location", JS::StringValue(locStr),
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+
+  // content.
+  nsCOMPtr<nsIDOMBlob> blob = static_cast<BlobParent*>(aAttachment.contentParent())->GetBlob();
+  JS::Value content;
+  nsresult rv = nsContentUtils::WrapNative(aContext,
+                                           JS_GetGlobalForScopeChain(aContext),
+                                           blob,
+                                           &NS_GET_IID(nsIDOMBlob),
+                                           &content);
+  NS_ENSURE_SUCCESS(rv, nullptr);
+  if (!JS_DefineProperty(aContext, obj, "content", content,
+                         nullptr, nullptr, 0)) {
+    return nullptr;
+  }
+
+  return obj;
+}
+
+static bool
+GetParamsFromSendMmsMessageRequest(JSContext* cx,
+                                   const SendMmsMessageRequest& aRequest,
+                                   JS::Value* aParam)
+{
+  JSObject* paramsObj = JS_NewObject(cx, nullptr, nullptr, nullptr);
+  NS_ENSURE_TRUE(paramsObj, false);
+
+  // smil
+  JSString* smilStr = JS_NewUCStringCopyN(cx,
+                                          aRequest.smil().get(),
+                                          aRequest.smil().Length());
+  NS_ENSURE_TRUE(smilStr, false);
+  if(!JS_DefineProperty(cx, paramsObj, "smil", JS::StringValue(smilStr),
+                        nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // subject
+  JSString* subjectStr = JS_NewUCStringCopyN(cx,
+                                             aRequest.subject().get(),
+                                             aRequest.subject().Length());
+  NS_ENSURE_TRUE(subjectStr, false);
+  if(!JS_DefineProperty(cx, paramsObj, "subject",
+                        JS::StringValue(subjectStr), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // receivers
+  JSObject* receiverArray = JS_NewArrayObject(cx,
+                                              aRequest.receivers().Length(),
+                                              nullptr);
+  NS_ENSURE_TRUE(receiverArray, false);
+  for (uint32_t i = 0; i < aRequest.receivers().Length(); i++) {
+    const nsString &recv = aRequest.receivers().ElementAt(i);
+    JSString* jsStr = JS_NewUCStringCopyN(cx,
+                                          recv.get(),
+                                          recv.Length());
+    NS_ENSURE_TRUE(jsStr, false);
+    jsval val = JS::StringValue(jsStr);
+    if (!JS_SetElement(cx, receiverArray, i, &val)) {
+      return false;
+    }
+  }
+  if (!JS_DefineProperty(cx, paramsObj, "receivers",
+                         JS::ObjectValue(*receiverArray), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  // attachments
+  JSObject* attachmentArray = JS_NewArrayObject(cx,
+                                                aRequest.attachments().Length(),
+                                                nullptr);
+  for (uint32_t i = 0; i < aRequest.attachments().Length(); i++) {
+    JSObject *obj = MmsAttachmentDataToJSObject(cx,
+                                                aRequest.attachments().ElementAt(i));
+    NS_ENSURE_TRUE(obj, false);
+    jsval val = JS::ObjectValue(*obj);
+    if (!JS_SetElement(cx, attachmentArray, i, &val)) {
+      return false;
+    }
+  }
+
+  if (!JS_DefineProperty(cx, paramsObj, "attachments",
+                         JS::ObjectValue(*attachmentArray), nullptr, nullptr, 0)) {
+    return false;
+  }
+
+  aParam->setObject(*paramsObj);
+  return true;
+}
 
 NS_IMPL_ISUPPORTS1(SmsParent, nsIObserver)
 
@@ -61,72 +182,95 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
                    const PRUnichar* aData)
 {
   if (!strcmp(aTopic, kSmsReceivedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-received' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyReceivedMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyReceivedMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsSendingObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-sending' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifySendingMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifySendingMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsSentObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-sent' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifySentMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifySentMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsFailedObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-failed' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyFailedMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyFailedMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsDeliverySuccessObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
-      NS_ERROR("Got a 'sms-delivery-success' topic without a valid message!");
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
+      NS_ERROR("Got a 'sms-sending' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyDeliverySuccessMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyDeliverySuccessMessage(msgData);
     return NS_OK;
   }
 
   if (!strcmp(aTopic, kSmsDeliveryErrorObserverTopic)) {
-    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
-    if (!message) {
+    MobileMessageData msgData;
+    if (!GetMobileMessageDataFromMessage(aSubject, msgData)) {
       NS_ERROR("Got a 'sms-delivery-error' topic without a valid message!");
       return NS_OK;
     }
 
-    unused << SendNotifyDeliveryErrorMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    unused << SendNotifyDeliveryErrorMessage(msgData);
     return NS_OK;
   }
 
   return NS_OK;
+}
+
+bool
+SmsParent::GetMobileMessageDataFromMessage(nsISupports *aMsg,
+                                           MobileMessageData &aData)
+{
+  nsCOMPtr<nsIDOMMozMmsMessage> mmsMsg = do_QueryInterface(aMsg);
+  if (mmsMsg) {
+    MmsMessageData data;
+    ContentParent *parent = static_cast<ContentParent*>(Manager());
+    static_cast<MmsMessage*>(mmsMsg.get())->GetMmsMessageData(parent, data);
+    aData = data;
+    return true;
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> smsMsg = do_QueryInterface(aMsg);
+  if (smsMsg) {
+    aData = static_cast<SmsMessage*>(smsMsg.get())->GetData();
+    return true;
+  }
+
+  NS_WARNING("Cannot get MobileMessageData");
+  return false;
 }
 
 bool
@@ -179,6 +323,8 @@ SmsParent::RecvPSmsRequestConstructor(PSmsRequestParent* aActor,
   switch (aRequest.type()) {
     case IPCSmsRequest::TSendMessageRequest:
       return actor->DoRequest(aRequest.get_SendMessageRequest());
+    case IPCSmsRequest::TRetrieveMessageRequest:
+      return actor->DoRequest(aRequest.get_RetrieveMessageRequest());
     case IPCSmsRequest::TGetMessageRequest:
       return actor->DoRequest(aRequest.get_GetMessageRequest());
     case IPCSmsRequest::TDeleteMessageRequest:
@@ -253,10 +399,48 @@ SmsRequestParent::ActorDestroy(ActorDestroyReason aWhy)
 bool
 SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
 {
-  nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsService, false);
+  switch(aRequest.type()) {
+  case SendMessageRequest::TSendSmsMessageRequest:
+    {
+      nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
+      NS_ENSURE_TRUE(smsService, true);
 
-  return NS_SUCCEEDED(smsService->Send(aRequest.number(), aRequest.message(), this));
+      const SendSmsMessageRequest &data = aRequest.get_SendSmsMessageRequest();
+      return NS_SUCCEEDED(smsService->Send(data.number(), data.message(), this));
+    }
+    break;
+  case SendMessageRequest::TSendMmsMessageRequest:
+    {
+      nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
+      NS_ENSURE_TRUE(mmsService, true);
+
+      AutoJSContext cx;
+      JS::Value params;
+      if (!GetParamsFromSendMmsMessageRequest(
+              cx,
+              aRequest.get_SendMmsMessageRequest(),
+              &params)) {
+        NS_WARNING("SmsRequestParent: Fail to build MMS params.");
+        return false;
+      }
+      return NS_SUCCEEDED(mmsService->Send(params, this));
+    }
+    break;
+  default:
+    MOZ_NOT_REACHED("Unknown type of SendMessageRequest!");
+    return false;
+  }
+
+  return true;
+}
+
+bool
+SmsRequestParent::DoRequest(const RetrieveMessageRequest& aRequest)
+{
+  nsCOMPtr<nsIMmsService> mmsService = do_GetService(MMS_SERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mmsService, false);
+
+  return NS_SUCCEEDED(mmsService->Retrieve(aRequest.messageId(), this));
 }
 
 bool
@@ -301,8 +485,22 @@ SmsRequestParent::SendReply(const MessageReply& aReply)
 NS_IMETHODIMP
 SmsRequestParent::NotifyMessageSent(nsISupports *aMessage)
 {
-  SmsMessage* message = static_cast<SmsMessage*>(aMessage);
-  return SendReply(MessageReply(ReplyMessageSend(message->GetData())));
+  nsCOMPtr<nsIDOMMozMmsMessage> mms = do_QueryInterface(aMessage);
+  if (mms) {
+    MmsMessage *msg = static_cast<MmsMessage*>(mms.get());
+    ContentParent *parent = static_cast<ContentParent*>(Manager()->Manager());
+    MmsMessageData mData;
+    msg->GetMmsMessageData(parent, mData);
+    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(mData))));
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
+  if (sms) {
+    SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
+    return SendReply(MessageReply(ReplyMessageSend(MobileMessageData(msg->GetData()))));
+  }
+
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
@@ -314,8 +512,22 @@ SmsRequestParent::NotifySendMessageFailed(int32_t aError)
 NS_IMETHODIMP
 SmsRequestParent::NotifyMessageGot(nsISupports *aMessage)
 {
-  SmsMessage* message = static_cast<SmsMessage*>(aMessage);
-  return SendReply(MessageReply(ReplyGetMessage(message->GetData())));
+  nsCOMPtr<nsIDOMMozMmsMessage> mms = do_QueryInterface(aMessage);
+  if (mms) {
+    MmsMessage *msg = static_cast<MmsMessage*>(mms.get());
+    ContentParent *parent = static_cast<ContentParent*>(Manager()->Manager());
+    MmsMessageData mData;
+    msg->GetMmsMessageData(parent, mData);
+    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(mData))));
+  }
+
+  nsCOMPtr<nsIDOMMozSmsMessage> sms = do_QueryInterface(aMessage);
+  if (sms) {
+    SmsMessage* msg = static_cast<SmsMessage*>(sms.get());
+    return SendReply(MessageReply(ReplyGetMessage(MobileMessageData(msg->GetData()))));
+  }
+
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP

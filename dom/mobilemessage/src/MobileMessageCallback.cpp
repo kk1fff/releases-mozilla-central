@@ -18,13 +18,7 @@ namespace mozilla {
 namespace dom {
 namespace mobilemessage {
 
-NS_IMPL_ADDREF(MobileMessageCallback)
-NS_IMPL_RELEASE(MobileMessageCallback)
-
-NS_INTERFACE_MAP_BEGIN(MobileMessageCallback)
-  NS_INTERFACE_MAP_ENTRY(nsIMobileMessageCallback)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
+NS_IMPL_ISUPPORTS1(MobileMessageCallback, nsIMobileMessageCallback)
 
 MobileMessageCallback::MobileMessageCallback(DOMRequest* aDOMRequest)
   : mDOMRequest(aDOMRequest)
@@ -34,7 +28,6 @@ MobileMessageCallback::MobileMessageCallback(DOMRequest* aDOMRequest)
 MobileMessageCallback::~MobileMessageCallback()
 {
 }
-
 
 nsresult
 MobileMessageCallback::NotifySuccess(const jsval& aResult)
