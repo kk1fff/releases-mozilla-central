@@ -9,6 +9,7 @@
 #include "SmsIPCService.h"
 #ifndef MOZ_B2G_RIL
 #include "MobileMessageDatabaseService.h"
+#include "MmsService.h"
 #endif
 #include "nsServiceManagerUtils.h"
 
@@ -47,6 +48,24 @@ SmsServicesFactory::CreateMobileMessageDatabaseService()
   }
 
   return mobileMessageDBService.forget();
+}
+
+/* static */ already_AddRefed<nsIMmsService>
+SmsServicesFactory::CreateMmsService()
+{
+  nsCOMPtr<nsIMmsService> mmsService;
+
+  if (XRE_GetProcessType() == GeckoProcessType_Content) {
+    mmsService = new SmsIPCService();
+  } else {
+#ifdef MOZ_B2G_RIL
+    mmsService = do_CreateInstance(RIL_MMSSERVICE_CONTRACTID);
+#else
+    mmsService = new MmsService();
+#endif
+  }
+
+  return mmsService.forget();
 }
 
 } // namespace mobilemessage

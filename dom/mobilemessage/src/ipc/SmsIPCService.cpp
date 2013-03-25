@@ -72,9 +72,10 @@ SendCursorRequest(const IPCMobileMessageCursor& aRequest,
 
 } // anonymous namespace
 
-NS_IMPL_ISUPPORTS2(SmsIPCService,
+NS_IMPL_ISUPPORTS3(SmsIPCService,
                    nsISmsService,
-                   nsIMobileMessageDatabaseService);
+                   nsIMmsService,
+                   nsIMobileMessageDatabaseService)
 
 /*
  * Implementation of nsISmsService.
@@ -160,3 +161,11 @@ SmsIPCService::CreateThreadCursor(nsIMobileMessageCursorCallback* aCursorCallbac
   return SendCursorRequest(IPCMobileMessageCursor(CreateThreadCursorRequest()),
                            aCursorCallback, aResult);
 }
+
+NS_IMETHODIMP
+SmsIPCService::Send(const JS::Value& aParameters,
+                    nsIMobileMessageCallback *aRequest)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
