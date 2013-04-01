@@ -103,6 +103,9 @@ protected:
   DoRequest(const SendMessageRequest& aRequest);
 
   bool
+  DoRequest(const RetrieveMessageRequest& aRequest);
+
+  bool
   DoRequest(const GetMessageRequest& aRequest);
 
   bool

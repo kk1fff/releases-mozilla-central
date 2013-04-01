@@ -239,3 +239,9 @@ SmsIPCService::Send(const JS::Value& aParameters,
   return NS_OK;
 }
 
+NS_IMETHODIMP
+SmsIPCService::Retrieve(int32_t aId, nsIMobileMessageCallback *aRequest)
+{ 
+  SendRequest(RetrieveMessageRequest(aId), aRequest);
+  return NS_OK;
+}

@@ -323,6 +323,8 @@ SmsParent::RecvPSmsRequestConstructor(PSmsRequestParent* aActor,
   switch (aRequest.type()) {
     case IPCSmsRequest::TSendMessageRequest:
       return actor->DoRequest(aRequest.get_SendMessageRequest());
+    case IPCSmsRequest::TRetrieveMessageRequest:
+      return actor->DoRequest(aRequest.get_RetrieveMessageRequest());
     case IPCSmsRequest::TGetMessageRequest:
       return actor->DoRequest(aRequest.get_GetMessageRequest());
     case IPCSmsRequest::TDeleteMessageRequest:
@@ -442,6 +444,18 @@ SmsRequestParent::DoRequest(const SendMessageRequest& aRequest)
     return false;
   }
   return true;
+}
+
+bool
+SmsRequestParent::DoRequest(const RetrieveMessageRequest& aRequest)
+{
+  nsCOMPtr<nsIMmsService> mmsService = do_GetService(RIL_MMSSERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(mmsService, false);
+
+  nsresult rv = mmsService->Retrieve(aRequest.messageId(), this);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  return NS_OK;
 }
 
 bool
